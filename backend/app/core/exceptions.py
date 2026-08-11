@@ -1,4 +1,4 @@
-"""Custom Domain Exceptions for Document Processing, Embeddings & Vector Store."""
+"""Custom Domain Exceptions for Document Processing, Embeddings, Vector Store & LLM Services."""
 
 from fastapi import HTTPException, status
 
@@ -46,3 +46,10 @@ class VectorStoreError(HTTPException):
 
     def __init__(self, detail: str = "Vector database storage operation failed."):
         super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
+
+
+class LLMProviderError(HTTPException):
+    """Raised when an LLM provider API call or initialization fails."""
+
+    def __init__(self, detail: str = "LLM provider service error."):
+        super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
