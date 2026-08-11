@@ -27,6 +27,13 @@ class EmptyPDFError(HTTPException):
         super().__init__(status_code=HTTP_422_UNPROCESSABLE, detail=detail)
 
 
+class DocumentNotFoundError(HTTPException):
+    """Raised when a requested document is not found in metadata store."""
+
+    def __init__(self, detail: str = "Requested document was not found."):
+        super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
 class EmbeddingError(HTTPException):
     """Raised when vector embedding generation fails due to model execution or invalid input."""
 
