@@ -1,8 +1,9 @@
-"""Complete RAG Q&A Orchestration Service."""
+"""Complete RAG Q&A Orchestration Service with Streaming Support."""
 
+import json
 import uuid
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 
 from app.services.retrieval_service import RetrievalService
 from app.services.llm_service import LLMService
@@ -17,7 +18,7 @@ FALLBACK_GROUNDED_ANSWER = "I am unable to find the answer in the uploaded docum
 
 
 class ChatService:
-    """Service orchestrating RAG Q&A: query validation, vector retrieval, prompt building, LLM generation, and citations."""
+    """Service orchestrating RAG Q&A: query validation, vector retrieval, prompt building, LLM generation, streaming, and citations."""
 
     def __init__(
         self,
@@ -83,7 +84,7 @@ class ChatService:
         document_id: Optional[str] = None,
         conversation_id: Optional[str] = None
     ) -> ChatResponse:
-        """Process natural language question through complete RAG pipeline."""
+        """Process natural language question through complete RAG pipeline (non-streaming)."""
         if not message or not message.strip():
             logger.warning("Chat request rejected: empty message.")
             raise ValueError("Message question cannot be empty or whitespace-only.")
@@ -158,3 +159,96 @@ class ChatService:
             answer=answer,
             sources=sources
         )
+
+    async def answer_question_stream(
+        self,
+        message: str,
+        document_id: Optional[str] = None,
+        conversation_id: Optional[str] = None
+    ) -> AsyncGenerator[str, None]:
+        """Stream RAG Q&A response token-by-token using Server-Sent Events (SSE)."""
+        if not message or not message.strip():
+            err_data = json.dumps({"detail": "Message question cannot be empty."})
+            yield f"event: error\ndata: {err_data}\n\n"
+            return
+
+        clean_message = message.strip()
+        session_id = conversation_id.strip() if conversation_id and conversation_id.strip() else str(uuid.uuid4())
+
+        try:
+            # 1. Vector retrieval
+            retrieval_data = self.retrieval_service.search(
+                query=clean_message,
+                top_k=4,
+                document_id=document_id
+            )
+            retrieved_results = retrieval_data.get("results", [])
+
+            # 2. Grounded relevance evaluation
+            is_relevant = False
+            if retrieved_results:
+                top_score = retrieved_results[0].get("score", 0.0)
+                if top_score >= MIN_RELEVANCE_THRESHOLD:
+                    is_relevant = True
+
+            if not is_relevant:
+                # Stream fallback answer and empty sources
+                meta_data = json.dumps({
+                    "conversation_id": session_id,
+                    "sources": []
+                })
+                yield f"event: metadata\ndata: {meta_data}\n\n"
+
+                token_data = json.dumps({"token": FALLBACK_GROUNDED_ANSWER})
+                yield f"event: token\ndata: {token_data}\n\n"
+
+                # Persist turn
+                self.conversation_store.append_turns(
+                    conversation_id=session_id,
+                    user_message=clean_message,
+                    assistant_message=FALLBACK_GROUNDED_ANSWER
+                )
+
+                done_data = json.dumps({"status": "complete"})
+                yield f"event: done\ndata: {done_data}\n\n"
+                return
+
+            # 3. Format context & sources
+            context_block = self.format_context_block(retrieved_results)
+            sources = self.extract_sources(retrieved_results)
+
+            # Yield metadata event containing sources & conversation_id
+            meta_payload = json.dumps({
+                "conversation_id": session_id,
+                "sources": [s.model_dump() for s in sources]
+            })
+            yield f"event: metadata\ndata: {meta_payload}\n\n"
+
+            # 4. Fetch history & generate streaming tokens
+            history = self.conversation_store.get_history(session_id, max_messages=6)
+            full_answer_chunks: List[str] = []
+
+            async for token in self.llm_service.generate_answer_stream(
+                question=clean_message,
+                context=context_block,
+                conversation_history=history
+            ):
+                full_answer_chunks.append(token)
+                tok_data = json.dumps({"token": token})
+                yield f"event: token\ndata: {tok_data}\n\n"
+
+            # 5. Complete stream and persist full answer
+            complete_answer = "".join(full_answer_chunks)
+            self.conversation_store.append_turns(
+                conversation_id=session_id,
+                user_message=clean_message,
+                assistant_message=complete_answer
+            )
+
+            done_data = json.dumps({"status": "complete"})
+            yield f"event: done\ndata: {done_data}\n\n"
+
+        except Exception as err:
+            logger.error(f"Error in streaming chat Q&A: {err}")
+            err_payload = json.dumps({"detail": str(err)})
+            yield f"event: error\ndata: {err_payload}\n\n"

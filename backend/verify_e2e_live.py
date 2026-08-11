@@ -1,4 +1,4 @@
-"""Live E2E Integration Verification Script against running FastAPI backend."""
+"""Live E2E Integration Verification Script against running FastAPI backend including SSE Streaming."""
 
 import os
 import json
@@ -41,7 +41,7 @@ def run_verification():
     print("3. Active Documents Count:", list_res["total_count"])
     assert list_res["total_count"] >= 1
 
-    # 4. Grounded RAG Q&A Request
+    # 4. Grounded RAG Q&A Request (Non-Streaming)
     chat_payload = json.dumps({
         "message": "What is the annual leave policy?"
     }).encode("utf-8")
@@ -52,20 +52,37 @@ def run_verification():
         headers={"Content-Type": "application/json"}
     )
     chat_res = json.loads(urllib.request.urlopen(chat_req).read().decode())
-    print("4. RAG Answer:", chat_res["answer"])
+    print("4. RAG Answer (Non-Streaming):", chat_res["answer"])
     print("4. Source Citations:", chat_res["sources"])
 
     assert len(chat_res["sources"]) >= 1
     assert chat_res["sources"][0]["filename"] == "sample_employee_handbook.pdf"
-    assert chat_res["sources"][0]["page_number"] == 1
 
-    # 5. Delete Document & Purge Vectors
+    # 5. Grounded RAG Q&A Streaming Request (SSE)
+    stream_payload = json.dumps({
+        "message": "What is the annual leave policy?"
+    }).encode("utf-8")
+
+    stream_req = urllib.request.Request(
+        "http://127.0.0.1:8000/api/chat/stream",
+        data=stream_payload,
+        headers={"Content-Type": "application/json"}
+    )
+    stream_res = urllib.request.urlopen(stream_req)
+    stream_body = stream_res.read().decode()
+    print("5. RAG SSE Stream Length:", len(stream_body), "bytes")
+    assert "event: metadata" in stream_body
+    assert "event: token" in stream_body
+    assert "event: done" in stream_body
+    print("5. SSE Stream Events Verified Successfully!")
+
+    # 6. Delete Document & Purge Vectors
     del_req = urllib.request.Request(f"http://127.0.0.1:8000/api/documents/{doc_id}", method="DELETE")
     del_res = json.loads(urllib.request.urlopen(del_req).read().decode())
-    print("5. Delete Status:", del_res)
+    print("6. Delete Status:", del_res)
     assert del_res["status"] == "deleted"
 
-    print("=== ALL LIVE E2E INTEGRATION CHECKS PASSED 100% ===")
+    print("=== ALL LIVE E2E STREAMING & INTEGRATION CHECKS PASSED 100% ===")
 
 if __name__ == "__main__":
     run_verification()

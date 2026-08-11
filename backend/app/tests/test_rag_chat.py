@@ -124,6 +124,45 @@ async def test_e2e_employee_handbook_rag_flow(temp_rag_environment):
 
 
 @pytest.mark.asyncio
+async def test_rag_chat_stream_endpoint(temp_rag_environment):
+    """Test streaming RAG Q&A endpoint returns SSE events (metadata, tokens, done)."""
+    handbook_path = os.path.join(ROOT_DIR, "documents", "sample_employee_handbook.pdf")
+    with open(handbook_path, "rb") as f:
+        pdf_bytes = f.read()
+
+    doc_service = temp_rag_environment["doc_service"]
+    await doc_service.process_pdf_upload("sample_employee_handbook.pdf", pdf_bytes, "application/pdf")
+
+    # Mock streaming LLM provider generator
+    async def mock_stream_gen(*args, **kwargs):
+        yield "Full-time "
+        yield "employees "
+        yield "accrue 20 days."
+
+    mock_llm = temp_rag_environment["llm_service"]
+    mock_llm.generate_answer_stream = mock_stream_gen
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/chat/stream",
+            json={
+                "message": "What is the annual leave policy?",
+                "conversation_id": "stream-session-001"
+            }
+        )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+        body = response.text
+
+        assert "event: metadata" in body
+        assert "sample_employee_handbook.pdf" in body
+        assert "event: token" in body
+        assert "Full-time" in body
+        assert "event: done" in body
+
+
+@pytest.mark.asyncio
 async def test_question_with_no_relevant_answer(temp_rag_environment):
     """Test asking question when no relevant context exists returns grounded fallback answer."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

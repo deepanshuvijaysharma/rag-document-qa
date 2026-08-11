@@ -27,7 +27,6 @@ export default function App() {
       setDocuments(data.documents || []);
     } catch (err) {
       console.error('Failed to fetch documents:', err);
-      // Non-blocking error notice on initial fetch if backend is warming up
     } finally {
       setIsDocsLoading(false);
     }
@@ -44,8 +43,6 @@ export default function App() {
     try {
       const result = await api.uploadDocument(file);
       await fetchDocuments();
-      
-      // Optionally auto-select the newly uploaded document
       if (result && result.document_id) {
         setSelectedDocId(result.document_id);
       }
@@ -72,44 +69,84 @@ export default function App() {
     }
   };
 
-  // Handle sending user question
+  // Handle sending user question with streaming responses
   const handleSendMessage = async (text) => {
     if (!text.trim()) return;
 
     setError(null);
     const userMsgId = `user-${Date.now()}`;
-    const newMessages = [
-      ...messages,
-      { id: userMsgId, sender: 'user', text: text.trim() }
-    ];
-    setMessages(newMessages);
+    const botMsgId = `bot-${Date.now()}`;
+
+    const userMessage = { id: userMsgId, sender: 'user', text: text.trim() };
+    const placeholderBotMessage = {
+      id: botMsgId,
+      sender: 'bot',
+      text: '',
+      sources: [],
+      isStreaming: true,
+    };
+
+    setMessages((prev) => [...prev, userMessage, placeholderBotMessage]);
     setIsChatLoading(true);
 
     try {
-      const response = await api.sendChatMessage(
-        text.trim(),
-        selectedDocId,
-        conversationId
-      );
-
-      if (response.conversation_id) {
-        setConversationId(response.conversation_id);
-      }
-
-      const botMsgId = `bot-${Date.now()}`;
-      setMessages([
-        ...newMessages,
-        {
-          id: botMsgId,
-          sender: 'bot',
-          text: response.answer,
-          sources: response.sources || []
-        }
-      ]);
+      await api.sendStreamingChatMessage({
+        message: text.trim(),
+        documentId: selectedDocId,
+        conversationId: conversationId,
+        onMetadata: (data) => {
+          if (data.conversation_id) {
+            setConversationId(data.conversation_id);
+          }
+          if (data.sources) {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === botMsgId
+                  ? { ...msg, sources: data.sources }
+                  : msg
+              )
+            );
+          }
+        },
+        onToken: (token) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMsgId
+                ? { ...msg, text: msg.text + token, isStreaming: true }
+                : msg
+            )
+          );
+        },
+        onComplete: () => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMsgId
+                ? { ...msg, isStreaming: false }
+                : msg
+            )
+          );
+          setIsChatLoading(false);
+        },
+        onError: (err) => {
+          console.error('Streaming chat error:', err);
+          setError(err.message || 'Streaming failed.');
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMsgId
+                ? {
+                    ...msg,
+                    text: msg.text || 'Error generating answer.',
+                    isStreaming: false,
+                  }
+                : msg
+            )
+          );
+          setIsChatLoading(false);
+        },
+      });
     } catch (err) {
-      console.error('Chat error:', err);
-      setError(err.message || 'Failed to generate answer from vector store.');
-    } finally {
+      console.error('Chat stream initialization error:', err);
+      setError(err.message || 'Failed to connect streaming endpoint.');
       setIsChatLoading(false);
     }
   };
