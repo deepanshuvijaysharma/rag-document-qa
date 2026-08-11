@@ -1,10 +1,39 @@
-"""RAG Chat API Endpoints (Skeleton)."""
+"""RAG Chat API Endpoints."""
 
-try:
-    from fastapi import APIRouter
+import logging
+from fastapi import APIRouter, Depends, status
 
-    router = APIRouter()
+from app.schemas.chat import ChatRequest, ChatResponse
+from app.services.chat_service import ChatService
+from app.core.exceptions import InvalidFileError
 
-    # RAG Chat & SSE streaming endpoints will be implemented in subsequent phases.
-except ImportError:
-    router = None  # type: ignore
+logger = logging.getLogger("rag_app.api.chat")
+
+router = APIRouter()
+
+
+def get_chat_service() -> ChatService:
+    """Dependency provider for ChatService instance."""
+    return ChatService()
+
+
+@router.post(
+    "",
+    response_model=ChatResponse,
+    status_code=status.HTTP_200_OK,
+    summary="RAG Question Answering Endpoint",
+    description="Processes user question through RAG pipeline (retrieval -> context -> LLM generation -> citations) and returns grounded response."
+)
+async def chat_endpoint(
+    payload: ChatRequest,
+    chat_service: ChatService = Depends(get_chat_service)
+) -> ChatResponse:
+    """Endpoint executing complete grounded RAG Q&A pipeline."""
+    if not payload.message or not payload.message.strip():
+        raise InvalidFileError("Message question cannot be empty.")
+
+    return await chat_service.answer_question(
+        message=payload.message,
+        document_id=payload.document_id,
+        conversation_id=payload.conversation_id
+    )
