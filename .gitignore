@@ -1,0 +1,38 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables & secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Python Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Vector Store & Storage Data
+data/chroma/*
+!data/chroma/.gitkeep
+documents/*
+!documents/.gitkeep
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / React Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+.eslintcache

@@ -1,0 +1,16 @@
+.git
+.gitignore
+.agents/
+.env
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+data/chroma/*
+!data/chroma/.gitkeep
+documents/*
+!documents/.gitkeep
+frontend/node_modules/
+frontend/dist/
