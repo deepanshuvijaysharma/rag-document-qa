@@ -1,4 +1,4 @@
-"""Custom Domain Exceptions for Document Processing & Embeddings."""
+"""Custom Domain Exceptions for Document Processing, Embeddings & Vector Store."""
 
 from fastapi import HTTPException, status
 
@@ -31,4 +31,11 @@ class EmbeddingError(HTTPException):
     """Raised when vector embedding generation fails due to model execution or invalid input."""
 
     def __init__(self, detail: str = "Failed to generate vector embedding."):
+        super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
+
+
+class VectorStoreError(HTTPException):
+    """Raised when ChromaDB collection operations fail."""
+
+    def __init__(self, detail: str = "Vector database storage operation failed."):
         super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)

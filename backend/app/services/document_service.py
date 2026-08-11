@@ -1,30 +1,36 @@
-"""Document Management Service."""
+"""Document Management Service Orchestrating Ingestion, Chunking, Embedding, and Storage."""
 
 import uuid
 import logging
 from typing import Dict, Any, Optional
 from app.services.pdf_service import PDFService
 from app.services.chunking_service import ChunkingService
+from app.services.embedding_service import EmbeddingService
+from app.services.vector_service import VectorService
 
 logger = logging.getLogger("rag_app.document_service")
 
 
 class DocumentService:
-    """Service handling high-level document ingestion, page extraction, and text chunking."""
+    """Service orchestrating PDF upload, text parsing, semantic chunking, vector embedding, and ChromaDB indexing."""
 
     def __init__(
         self,
         pdf_service: Optional[PDFService] = None,
-        chunking_service: Optional[ChunkingService] = None
+        chunking_service: Optional[ChunkingService] = None,
+        embedding_service: Optional[EmbeddingService] = None,
+        vector_service: Optional[VectorService] = None
     ) -> None:
         """Initialize DocumentService with dependency injection."""
         self.pdf_service = pdf_service or PDFService()
         self.chunking_service = chunking_service or ChunkingService()
+        self.embedding_service = embedding_service or EmbeddingService()
+        self.vector_service = vector_service or VectorService()
 
     async def process_pdf_upload(
         self, raw_filename: str, content: bytes, content_type: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Validate uploaded PDF, extract page text, chunk document, and return structured document.
+        """Validate uploaded PDF, extract page text, chunk, embed, and index in ChromaDB.
         
         Returns dictionary matching DocumentUploadResponse schema:
         {
@@ -51,16 +57,23 @@ class DocumentService:
         # 3. Generate unique document ID
         doc_id = str(uuid.uuid4())
 
-        # 4. Split extracted pages into semantic chunks
+        # 4. Split extracted pages into semantic text chunks
         chunks = self.chunking_service.split_pages_into_chunks(
             pages=pages,
             doc_id=doc_id,
             filename=sanitized_filename
         )
 
+        # 5. Generate vector embeddings for generated chunks
+        chunk_texts = [c["text"] for c in chunks]
+        embeddings = self.embedding_service.embed_documents(chunk_texts)
+
+        # 6. Index chunks and vector embeddings into ChromaDB vector store
+        self.vector_service.add_chunks(chunks=chunks, embeddings=embeddings)
+
         logger.info(
-            f"Successfully processed PDF upload '{sanitized_filename}' "
-            f"(ID: {doc_id}, Pages: {len(pages)}, Chunks: {len(chunks)}, Size: {len(content)} bytes)"
+            f"Successfully processed and indexed PDF upload '{sanitized_filename}' "
+            f"(ID: {doc_id}, Pages: {len(pages)}, Chunks: {len(chunks)}, Indexed Vectors: {len(embeddings)})"
         )
 
         return {
@@ -73,3 +86,7 @@ class DocumentService:
             "pages": pages,
             "chunks": chunks
         }
+
+    def delete_document(self, document_id: str) -> int:
+        """Purge document vector embeddings and metadata from vector database index."""
+        return self.vector_service.delete_document(document_id)
