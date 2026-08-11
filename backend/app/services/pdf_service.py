@@ -3,7 +3,7 @@
 import os
 import re
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pymupdf
 
 from app.core.exceptions import InvalidFileError, CorruptedPDFError, EmptyPDFError
@@ -12,6 +12,17 @@ logger = logging.getLogger("rag_app.pdf_service")
 
 # Maximum allowed file size: 25 MB
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
+
+# Allowed PDF MIME types
+ALLOWED_MIME_TYPES = {
+    "application/pdf",
+    "application/x-pdf",
+    "application/acrobat",
+    "applications/vnd.pdf",
+    "text/pdf",
+    "text/x-pdf",
+    "application/octet-stream",  # Generic binary upload header
+}
 
 
 class PDFService:
@@ -35,8 +46,8 @@ class PDFService:
             
         return clean_name
 
-    def validate_pdf_file(self, filename: str, content: bytes) -> str:
-        """Validate uploaded PDF file extension, magic bytes, and file size.
+    def validate_pdf_file(self, filename: str, content: bytes, content_type: Optional[str] = None) -> str:
+        """Validate uploaded PDF file extension, magic bytes, MIME type, and file size.
         
         Returns sanitized filename if valid.
         Raises InvalidFileError if validation fails.
@@ -48,19 +59,26 @@ class PDFService:
             logger.warning(f"File validation failed: '{sanitized_name}' lacks .pdf extension.")
             raise InvalidFileError("Only PDF documents (.pdf) are supported.")
 
-        # 2. Validate non-empty content
+        # 2. Validate MIME type if supplied by request
+        if content_type:
+            clean_mime = content_type.strip().lower()
+            if clean_mime not in ALLOWED_MIME_TYPES:
+                logger.warning(f"File validation failed: Invalid MIME type '{content_type}' for '{sanitized_name}'.")
+                raise InvalidFileError(f"Invalid MIME type '{content_type}'. Only PDF files are supported.")
+
+        # 3. Validate non-empty content
         file_size = len(content)
         if file_size == 0:
             logger.warning("File validation failed: Uploaded file is 0 bytes.")
             raise InvalidFileError("Uploaded file is empty (0 bytes).")
 
-        # 3. Validate file size limits
+        # 4. Validate file size limits
         if file_size > MAX_FILE_SIZE_BYTES:
             max_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
             logger.warning(f"File validation failed: Size {file_size} exceeds {max_mb}MB limit.")
             raise InvalidFileError(f"File size exceeds maximum allowed limit of {max_mb}MB.")
 
-        # 4. Validate magic number bytes (%PDF-)
+        # 5. Validate magic number bytes (%PDF-)
         if not content.startswith(b"%PDF-"):
             logger.warning(f"File validation failed: Magic number header missing in '{sanitized_name}'.")
             raise InvalidFileError("File content is not a valid PDF document (invalid magic header).")

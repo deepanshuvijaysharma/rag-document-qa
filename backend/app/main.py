@@ -22,7 +22,6 @@ app = FastAPI(
 )
 
 # CORS Middleware Setup
-# Origins allowed to access API resources
 allowed_origins = set(settings.CORS_ORIGINS)
 if settings.FRONTEND_ORIGIN:
     allowed_origins.add(settings.FRONTEND_ORIGIN)
@@ -35,8 +34,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API Router
+# Include API Router under /api/v1 and alias /api
 app.include_router(api_router, prefix=settings.API_PREFIX)
+app.include_router(api_router, prefix="/api")
 
 
 @app.get("/health", tags=["Health"])

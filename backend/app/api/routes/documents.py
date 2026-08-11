@@ -21,7 +21,7 @@ def get_document_service() -> DocumentService:
     response_model=DocumentUploadResponse,
     status_code=status.HTTP_200_OK,
     summary="Upload PDF Document",
-    description="Uploads a PDF file, validates format/headers, extracts text per page preserving page numbers, and returns extracted document structure."
+    description="Uploads a PDF file, validates format/MIME/headers, extracts text per page preserving page numbers, and returns extracted document structure."
 )
 async def upload_document(
     file: UploadFile = File(..., description="PDF document file to process"),
@@ -37,7 +37,8 @@ async def upload_document(
     # Process PDF ingestion pipeline
     result = await document_service.process_pdf_upload(
         raw_filename=file.filename,
-        content=content
+        content=content,
+        content_type=file.content_type
     )
 
     return DocumentUploadResponse(**result)

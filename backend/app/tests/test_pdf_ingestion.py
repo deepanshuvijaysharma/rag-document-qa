@@ -45,7 +45,7 @@ def test_pdf_service_valid_single_page():
     service = PDFService()
     pdf_bytes = create_mock_pdf_bytes(["Sample text content for page 1"])
     
-    filename = service.validate_pdf_file("test.pdf", pdf_bytes)
+    filename = service.validate_pdf_file("test.pdf", pdf_bytes, content_type="application/pdf")
     assert filename == "test.pdf"
 
     pages = service.extract_pages(pdf_bytes, filename)
@@ -91,6 +91,14 @@ def test_pdf_service_invalid_extension():
     assert "Only PDF documents (.pdf) are supported" in str(exc_info.value.detail)
 
 
+def test_pdf_service_invalid_mime_type():
+    """Test PDFService rejects files with non-PDF MIME type."""
+    service = PDFService()
+    with pytest.raises(InvalidFileError) as exc_info:
+        service.validate_pdf_file("file.pdf", b"%PDF-mock content", content_type="image/png")
+    assert "Invalid MIME type" in str(exc_info.value.detail)
+
+
 def test_pdf_service_invalid_magic_header():
     """Test PDFService rejects files lacking %PDF- magic bytes."""
     service = PDFService()
@@ -120,11 +128,11 @@ def test_pdf_service_empty_text_pdf():
 
 
 # ============================================================================
-# API Integration Tests: POST /api/v1/documents/upload
+# API Integration Tests: POST /api/v1/documents/upload & /api/documents/upload
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_api_upload_valid_pdf():
+async def test_api_upload_valid_pdf_v1_endpoint():
     """Test API POST /api/v1/documents/upload with a valid PDF file."""
     pdf_bytes = create_mock_pdf_bytes(["Page 1 API Test Text", "Page 2 API Test Text"])
     
@@ -146,6 +154,23 @@ async def test_api_upload_valid_pdf():
         assert "Page 1 API Test Text" in data["pages"][0]["text"]
         assert data["pages"][1]["page_number"] == 2
         assert "Page 2 API Test Text" in data["pages"][1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_api_upload_valid_pdf_alias_endpoint():
+    """Test API POST /api/documents/upload route alias."""
+    pdf_bytes = create_mock_pdf_bytes(["Alias endpoint test text"])
+    
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/documents/upload",
+            files={"file": ("alias_doc.pdf", pdf_bytes, "application/pdf")}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["filename"] == "alias_doc.pdf"
+        assert data["page_count"] == 1
 
 
 @pytest.mark.asyncio
