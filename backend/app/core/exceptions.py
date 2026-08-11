@@ -1,4 +1,4 @@
-"""Custom Domain Exceptions for Document Processing."""
+"""Custom Domain Exceptions for Document Processing & Embeddings."""
 
 from fastapi import HTTPException, status
 
@@ -25,3 +25,10 @@ class EmptyPDFError(HTTPException):
 
     def __init__(self, detail: str = "The uploaded PDF document contains no extractable text."):
         super().__init__(status_code=HTTP_422_UNPROCESSABLE, detail=detail)
+
+
+class EmbeddingError(HTTPException):
+    """Raised when vector embedding generation fails due to model execution or invalid input."""
+
+    def __init__(self, detail: str = "Failed to generate vector embedding."):
+        super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
