@@ -28,7 +28,7 @@ class RecursiveCharacterTextSplitter:
 
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.separators = separators or ["\n\n", "\n", ". ", " ", ""]
+        self.separators = separators or ["\n\n", "\n", ". ", "? ", "! ", " ", ""]
 
     def _split_text(self, text: str, separators: List[str]) -> List[str]:
         """Recursively split text by separators until pieces fit within chunk_size."""
@@ -118,27 +118,7 @@ class ChunkingService:
     def split_pages_into_chunks(
         self, pages: List[Dict[str, Any]], doc_id: str, filename: str
     ) -> List[Dict[str, Any]]:
-        """Split text into semantic chunks while maintaining metadata and 1-indexed page numbers.
-        
-        Args:
-            pages: List of page dicts [{"page_number": 1, "text": "..."}, ...]
-            doc_id: Unique UUID string of parent document
-            filename: Source PDF document filename
-            
-        Returns:
-            List of chunk dictionaries:
-            [
-                {
-                    "chunk_id": "...",
-                    "document_id": "...",
-                    "source_filename": "...",
-                    "page_number": 1,
-                    "chunk_index": 0,
-                    "text": "..."
-                },
-                ...
-            ]
-        """
+        """Split text into semantic chunks while maintaining metadata and 1-indexed page numbers."""
         chunks: List[Dict[str, Any]] = []
         chunk_counter = 0
 

@@ -31,9 +31,11 @@ class Settings(BaseSettings):
     TOP_K: int = 4
     MAX_CONTEXT_CHUNKS: int = 10
 
-    # Vector Store Configuration
+    # Vector Store Configuration (Local Persistent or Distributed HttpClient)
     CHROMA_PERSIST_DIRECTORY: str = "./data/chroma"
     CHROMA_COLLECTION_NAME: str = "rag_documents"
+    CHROMA_HOST: Optional[str] = None
+    CHROMA_PORT: Optional[int] = None
 
     # Embedding & Chunking Configuration
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"

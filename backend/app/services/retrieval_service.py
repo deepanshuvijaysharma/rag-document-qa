@@ -1,5 +1,6 @@
-"""Vector Retrieval Service for RAG Context Assembly."""
+"""Vector & Hybrid Retrieval Service for Grounded RAG Context Assembly."""
 
+import re
 import logging
 from typing import List, Dict, Any, Optional
 
@@ -12,7 +13,7 @@ logger = logging.getLogger("rag_app.retrieval_service")
 
 
 class RetrievalService:
-    """Service handling query vectorization, ChromaDB similarity search, and result normalization."""
+    """Service handling query vectorization, ChromaDB similarity search, and hybrid keyword re-ranking."""
 
     def __init__(
         self,
@@ -23,13 +24,22 @@ class RetrievalService:
         self.embedding_service = embedding_service or EmbeddingService()
         self.vector_service = vector_service or VectorService()
 
+    def _compute_keyword_overlap(self, query: str, text: str) -> float:
+        """Calculate token overlap ratio between query keywords and candidate text chunk."""
+        query_words = set(re.findall(r"\w+", query.lower()))
+        if not query_words:
+            return 0.0
+        text_words = set(re.findall(r"\w+", text.lower()))
+        matched_words = query_words.intersection(text_words)
+        return len(matched_words) / len(query_words)
+
     def search(
         self,
         query: str,
         top_k: int = 4,
         document_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Vector search ChromaDB for top_k document chunks relevant to query.
+        """Hybrid search combining dense vector embeddings with sparse keyword term overlap.
         
         Args:
             query: User natural language search question
@@ -54,10 +64,6 @@ class RetrievalService:
                     ...
                 ]
             }
-            
-        Raises:
-            ValueError: If query is empty or top_k <= 0.
-            VectorStoreError: If vector search operation fails.
         """
         if not query or not query.strip():
             logger.warning("Retrieval search rejected: empty query string.")
@@ -75,37 +81,46 @@ class RetrievalService:
             logger.error(f"Failed to generate embedding for query '{clean_query}': {err}")
             raise EmbeddingError(f"Error vectorizing search query: {err}")
 
-        # 2. Query ChromaDB vector index for nearest neighbors
+        # 2. Query ChromaDB vector index for nearest neighbors (fetch candidates for hybrid reranking)
+        fetch_k = max(top_k * 2, 8)
         try:
             matches = self.vector_service.similarity_search(
                 query_embedding=query_embedding,
-                top_k=top_k,
+                top_k=fetch_k,
                 document_id=document_id
             )
         except Exception as err:
             logger.error(f"ChromaDB retrieval failed for query '{clean_query}': {err}")
             raise VectorStoreError(f"Error searching vector store: {err}")
 
-        # 3. Normalize matches into clean application schema records
+        # 3. Hybrid Reranking: Dense Cosine Similarity (70%) + Sparse Keyword Overlap (30%)
         normalized_results: List[Dict[str, Any]] = []
         for match in matches:
+            dense_score = match["score"]
+            kw_overlap = self._compute_keyword_overlap(clean_query, match["text"])
+            hybrid_score = round((0.7 * dense_score) + (0.3 * kw_overlap), 4)
+
             normalized_results.append({
                 "text": match["text"],
                 "document_id": match["document_id"],
                 "filename": match["source_filename"],
                 "page_number": match["page_number"],
                 "chunk_id": match["chunk_id"],
-                "score": match["score"],
+                "score": max(dense_score, hybrid_score),
                 "distance": match["distance"]
             })
 
+        # Sort candidate results by hybrid score descending and limit to top_k
+        normalized_results.sort(key=lambda x: x["score"], reverse=True)
+        final_results = normalized_results[:top_k]
+
         logger.info(
-            f"Retrieval query '{clean_query}' returned {len(normalized_results)} results "
+            f"Hybrid retrieval query '{clean_query}' returned {len(final_results)} results "
             f"(top_k={top_k}, doc_filter={document_id or 'ALL'})."
         )
 
         return {
             "query": clean_query,
-            "total_results": len(normalized_results),
-            "results": normalized_results
+            "total_results": len(final_results),
+            "results": final_results
         }

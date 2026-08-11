@@ -15,8 +15,8 @@ logger = logging.getLogger("rag_app.vector_service")
 class VectorService:
     """Service handling ChromaDB vector index operations, collection CRUD, and similarity queries."""
 
-    # Shared persistent client instance per directory to prevent file lock contention
-    _client_cache: Dict[str, chromadb.PersistentClient] = {}
+    # Shared persistent client instance per directory/host to prevent lock contention
+    _client_cache: Dict[str, Any] = {}
     _lock = threading.Lock()
 
     def __init__(
@@ -24,25 +24,29 @@ class VectorService:
         persist_directory: Optional[str] = None,
         collection_name: Optional[str] = None
     ) -> None:
-        """Initialize VectorService with persistent storage directory and collection boundaries.
-        
-        Args:
-            persist_directory: Storage directory path for ChromaDB files. Defaults to settings.CHROMA_PERSIST_DIRECTORY.
-            collection_name: Collection name. Defaults to settings.CHROMA_COLLECTION_NAME.
-        """
+        """Initialize VectorService with persistent storage directory or HttpClient host boundaries."""
         self.persist_directory = persist_directory or settings.CHROMA_PERSIST_DIRECTORY
         self.collection_name = collection_name or settings.CHROMA_COLLECTION_NAME
 
-        # Ensure persist directory path exists
+        # Ensure persist directory path exists for local mode
         os.makedirs(self.persist_directory, exist_ok=True)
 
         with self._lock:
-            # Get or create persistent client instance
-            if self.persist_directory not in self._client_cache:
-                logger.info(f"Initializing ChromaDB PersistentClient at '{self.persist_directory}'...")
-                self._client_cache[self.persist_directory] = chromadb.PersistentClient(path=self.persist_directory)
-
-            self.client = self._client_cache[self.persist_directory]
+            # Check if remote distributed ChromaDB HttpClient is configured
+            if settings.CHROMA_HOST:
+                client_key = f"http://{settings.CHROMA_HOST}:{settings.CHROMA_PORT or 8000}"
+                if client_key not in self._client_cache:
+                    logger.info(f"Initializing ChromaDB HttpClient targeting '{client_key}'...")
+                    self._client_cache[client_key] = chromadb.HttpClient(
+                        host=settings.CHROMA_HOST,
+                        port=settings.CHROMA_PORT or 8000
+                    )
+                self.client = self._client_cache[client_key]
+            else:
+                if self.persist_directory not in self._client_cache:
+                    logger.info(f"Initializing ChromaDB PersistentClient at '{self.persist_directory}'...")
+                    self._client_cache[self.persist_directory] = chromadb.PersistentClient(path=self.persist_directory)
+                self.client = self._client_cache[self.persist_directory]
 
             # Get or create collection configured with cosine distance space
             try:
