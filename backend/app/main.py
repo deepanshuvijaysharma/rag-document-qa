@@ -1,55 +1,50 @@
 """FastAPI Application Main Entrypoint."""
 
 import logging
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.api.routes import api_router
 
-# Configure basic logging format
+# Configure structured logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("rag_app")
 
-try:
-    from fastapi import FastAPI
-    from fastapi.middleware.cors import CORSMiddleware
-    from app.api.routes import api_router
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.VERSION,
+    openapi_url=f"{settings.API_PREFIX}/openapi.json",
+    docs_url=f"{settings.API_PREFIX}/docs",
+    redoc_url=f"{settings.API_PREFIX}/redoc",
+)
 
-    app = FastAPI(
-        title=settings.PROJECT_NAME,
-        version=settings.VERSION,
-        openapi_url=f"{settings.API_V1_STR}/openapi.json",
-        docs_url=f"{settings.API_V1_STR}/docs",
-        redoc_url=f"{settings.API_V1_STR}/redoc",
-    )
+# CORS Middleware Setup
+# Origins allowed to access API resources
+allowed_origins = set(settings.CORS_ORIGINS)
+if settings.FRONTEND_ORIGIN:
+    allowed_origins.add(settings.FRONTEND_ORIGIN)
 
-    # CORS Security Configuration
-    # Whitelists configured origins (e.g. Vite frontend on port 5173).
-    # In production, restrict CORS_ORIGINS to trusted deployment domains.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-        allow_headers=["*"],
-    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(allowed_origins),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
 
-    # Include aggregated API v1 routes
-    app.include_router(api_router, prefix=settings.API_V1_STR)
+# Include API Router
+app.include_router(api_router, prefix=settings.API_PREFIX)
 
-    @app.get("/health", tags=["Health"])
-    async def root_health():
-        """Root level health check endpoint."""
-        return {"status": "ok"}
 
-except ImportError:
-    logger.warning("FastAPI framework not installed yet. Skeleton modules defined.")
-    app = None  # type: ignore
+@app.get("/health", tags=["Health"])
+async def root_health():
+    """Root level health check endpoint."""
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
-    try:
-        import uvicorn
-        uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
-    except ImportError:
-        print("Uvicorn not installed. Please install dependencies in requirements.txt")
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
