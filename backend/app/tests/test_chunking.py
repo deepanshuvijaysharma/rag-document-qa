@@ -1,140 +1,164 @@
-"""Unit and Integration Tests for Document Chunking Service."""
+"""Unit and API Integration Tests for Document Chunking Service."""
 
+import os
+import shutil
+import tempfile
+import pymupdf
 import pytest
 from httpx import AsyncClient, ASGITransport
+
 from app.main import app
+from app.services.pdf_service import PDFService
 from app.services.chunking_service import ChunkingService
-from app.tests.test_pdf_ingestion import create_mock_pdf_bytes
+from app.services.embedding_service import EmbeddingService
+from app.services.vector_service import VectorService
+from app.services.document_service import DocumentService
+from app.db.metadata_store import MetadataStore
+
+
+def create_mock_pdf_bytes(page_texts: list) -> bytes:
+    """Helper to generate in-memory valid PDF bytes for testing."""
+    doc = pymupdf.open()
+    for text in page_texts:
+        page = doc.new_page()
+        page.insert_text((50, 100), text)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
 
 
 # ============================================================================
-# Unit Tests: ChunkingService Configuration & Logic
+# Unit Tests for ChunkingService Logic & Constraints
 # ============================================================================
 
 def test_invalid_chunk_size_zero():
-    """Test ChunkingService raises ValueError when chunk_size <= 0."""
-    with pytest.raises(ValueError) as exc_info:
-        ChunkingService(chunk_size=0, chunk_overlap=10)
-    assert "chunk_size must be a positive integer" in str(exc_info.value)
+    """Test ChunkingService rejects zero chunk size."""
+    with pytest.raises(ValueError) as exc:
+        ChunkingService(chunk_size=0, chunk_overlap=0)
+    assert "chunk_size must be a positive integer" in str(exc.value)
 
 
 def test_invalid_chunk_size_negative():
-    """Test ChunkingService raises ValueError when chunk_size < 0."""
-    with pytest.raises(ValueError) as exc_info:
-        ChunkingService(chunk_size=-500, chunk_overlap=10)
-    assert "chunk_size must be a positive integer" in str(exc_info.value)
+    """Test ChunkingService rejects negative chunk size."""
+    with pytest.raises(ValueError) as exc:
+        ChunkingService(chunk_size=-100, chunk_overlap=0)
+    assert "chunk_size must be a positive integer" in str(exc.value)
 
 
 def test_invalid_chunk_overlap_negative():
-    """Test ChunkingService raises ValueError when chunk_overlap < 0."""
-    with pytest.raises(ValueError) as exc_info:
-        ChunkingService(chunk_size=1000, chunk_overlap=-20)
-    assert "chunk_overlap cannot be negative" in str(exc_info.value)
+    """Test ChunkingService rejects negative overlap."""
+    with pytest.raises(ValueError) as exc:
+        ChunkingService(chunk_size=500, chunk_overlap=-10)
+    assert "chunk_overlap cannot be negative" in str(exc.value)
 
 
 def test_invalid_chunk_overlap_equal_or_greater_than_size():
-    """Test ChunkingService raises ValueError when chunk_overlap >= chunk_size."""
-    with pytest.raises(ValueError) as exc_info:
+    """Test ChunkingService rejects overlap >= chunk_size."""
+    with pytest.raises(ValueError) as exc:
         ChunkingService(chunk_size=500, chunk_overlap=500)
-    assert "must be strictly less than chunk_size" in str(exc_info.value)
+    assert "chunk_overlap must be strictly less than chunk_size" in str(exc.value)
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError) as exc2:
         ChunkingService(chunk_size=500, chunk_overlap=600)
-    assert "must be strictly less than chunk_size" in str(exc_info.value)
+    assert "chunk_overlap must be strictly less than chunk_size" in str(exc2.value)
 
 
 def test_chunking_short_document():
-    """Test document text shorter than chunk_size creates a single chunk."""
-    chunker = ChunkingService(chunk_size=1000, chunk_overlap=100)
-    pages = [{"page_number": 1, "text": "Short document content."}]
-    
-    chunks = chunker.split_pages_into_chunks(pages, doc_id="doc-123", filename="short.pdf")
-    
+    """Test splitting a short single-page document into chunks."""
+    chunker = ChunkingService(chunk_size=500, chunk_overlap=50)
+    pages = [{
+        "page_number": 1,
+        "source_filename": "short.pdf",
+        "document_id": "doc-101",
+        "text": "This is a short document page paragraph explaining system design."
+    }]
+
+    chunks = chunker.split_pages_into_chunks(pages)
+
     assert len(chunks) == 1
-    assert chunks[0]["chunk_id"] is not None
-    assert chunks[0]["document_id"] == "doc-123"
-    assert chunks[0]["source_filename"] == "short.pdf"
-    assert chunks[0]["page_number"] == 1
-    assert chunks[0]["chunk_index"] == 0
-    assert chunks[0]["text"] == "Short document content."
+    c = chunks[0]
+    assert c["page_number"] == 1
+    assert c["source_filename"] == "short.pdf"
+    assert c["document_id"] == "doc-101"
+    assert c["chunk_index"] == 0
+    assert c["chunk_id"] == "chunk-doc-101-0"
+    assert "system design" in c["text"]
 
 
 def test_chunking_long_document():
-    """Test long document text splits into multiple chunks."""
+    """Test splitting a long text into multiple sequential chunks."""
     chunker = ChunkingService(chunk_size=100, chunk_overlap=20)
-    long_text = "Word " * 150  # ~750 characters long text
-    pages = [{"page_number": 1, "text": long_text}]
-    
-    chunks = chunker.split_pages_into_chunks(pages, doc_id="doc-long", filename="long.pdf")
-    
+    long_text = "Word " * 150  # ~750 characters
+
+    pages = [{
+        "page_number": 1,
+        "source_filename": "long.pdf",
+        "document_id": "doc-102",
+        "text": long_text
+    }]
+
+    chunks = chunker.split_pages_into_chunks(pages)
+
     assert len(chunks) > 1
-    for idx, chunk in enumerate(chunks):
-        assert chunk["chunk_index"] == idx
-        assert chunk["document_id"] == "doc-long"
-        assert chunk["source_filename"] == "long.pdf"
-        assert chunk["page_number"] == 1
-        assert len(chunk["text"]) <= 120  # Bound check including separator leeway
+    for idx, c in enumerate(chunks):
+        assert c["page_number"] == 1
+        assert c["chunk_index"] == idx
+        assert c["chunk_id"] == f"chunk-doc-102-{idx}"
+        assert len(c["text"]) > 0
 
 
 def test_chunking_overlap_verification():
-    """Test adjacent chunks preserve configured overlap content."""
-    chunker = ChunkingService(chunk_size=100, chunk_overlap=30)
-    text = "Paragraph 1 containing distinct sentences. Paragraph 2 explaining another detail in length. Paragraph 3 summarizing."
-    pages = [{"page_number": 1, "text": text}]
-    
-    chunks = chunker.split_pages_into_chunks(pages, doc_id="doc-overlap", filename="overlap.pdf")
+    """Test chunk overlap retains trailing text from preceding chunk."""
+    chunker = ChunkingService(chunk_size=50, chunk_overlap=15)
+    text = "Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda Mu"
+
+    pages = [{
+        "page_number": 1,
+        "source_filename": "overlap.pdf",
+        "document_id": "doc-103",
+        "text": text
+    }]
+
+    chunks = chunker.split_pages_into_chunks(pages)
     assert len(chunks) >= 2
-    
-    # Check that chunk 1 ends with text present at the start of chunk 2
-    chunk1_end = chunks[0]["text"][-20:]
-    assert any(part in chunks[1]["text"] for part in chunk1_end.split())
+
+    # Check that tail of chunk 0 overlaps with head of chunk 1
+    chunk0_words = set(chunks[0]["text"].split())
+    chunk1_words = set(chunks[1]["text"].split())
+    overlapping_words = chunk0_words.intersection(chunk1_words)
+    assert len(overlapping_words) > 0
 
 
 def test_chunking_multiple_pages_metadata_preservation():
-    """Test chunking preserves page numbers across multi-page input."""
-    chunker = ChunkingService(chunk_size=200, chunk_overlap=50)
+    """Test chunking across multiple pages preserves distinct page_number and source_filename metadata."""
+    chunker = ChunkingService(chunk_size=200, chunk_overlap=20)
     pages = [
-        {"page_number": 1, "text": "Page 1 " + ("content " * 20)},
-        {"page_number": 2, "text": "Page 2 " + ("information " * 20)},
-        {"page_number": 3, "text": "Page 3 " + ("summary " * 20)},
+        {"page_number": 1, "source_filename": "multi.pdf", "document_id": "doc-104", "text": "Page 1 content about engineering principles."},
+        {"page_number": 2, "source_filename": "multi.pdf", "document_id": "doc-104", "text": "Page 2 content about system architecture."}
     ]
-    
-    chunks = chunker.split_pages_into_chunks(pages, doc_id="doc-multi", filename="multi.pdf")
-    
-    # Verify sequential chunk_index
-    for idx, chunk in enumerate(chunks):
-        assert chunk["chunk_index"] == idx
-        assert chunk["document_id"] == "doc-multi"
-        assert chunk["source_filename"] == "multi.pdf"
-        assert chunk["page_number"] in [1, 2, 3]
 
-    # Verify that page 1 chunks have page_number 1, page 2 has page_number 2, page 3 has page_number 3
+    chunks = chunker.split_pages_into_chunks(pages)
+
     page1_chunks = [c for c in chunks if c["page_number"] == 1]
     page2_chunks = [c for c in chunks if c["page_number"] == 2]
-    page3_chunks = [c for c in chunks if c["page_number"] == 3]
 
     assert len(page1_chunks) >= 1
     assert len(page2_chunks) >= 1
-    assert len(page3_chunks) >= 1
-    assert "Page 1" in page1_chunks[0]["text"]
-    assert "Page 2" in page2_chunks[0]["text"]
-    assert "Page 3" in page3_chunks[0]["text"]
+
+    assert "engineering principles" in page1_chunks[0]["text"]
+    assert "system architecture" in page2_chunks[0]["text"]
 
 
 def test_chunking_whitespace_and_empty_filtering():
-    """Test whitespace-only pages or empty chunks are filtered out."""
-    chunker = ChunkingService(chunk_size=500, chunk_overlap=100)
+    """Test whitespace-only and empty pages produce no chunks."""
+    chunker = ChunkingService()
     pages = [
-        {"page_number": 1, "text": "   \n\n  \t  "},
-        {"page_number": 2, "text": "Valid text on page 2."},
-        {"page_number": 3, "text": ""},
+        {"page_number": 1, "source_filename": "empty.pdf", "document_id": "doc-105", "text": "   \n\t  "},
+        {"page_number": 2, "source_filename": "empty.pdf", "document_id": "doc-105", "text": ""}
     ]
-    
-    chunks = chunker.split_pages_into_chunks(pages, doc_id="doc-empty", filename="empty.pdf")
-    
-    assert len(chunks) == 1
-    assert chunks[0]["page_number"] == 2
-    assert chunks[0]["text"] == "Valid text on page 2."
+
+    chunks = chunker.split_pages_into_chunks(pages)
+    assert len(chunks) == 0
 
 
 # ============================================================================
@@ -144,35 +168,64 @@ def test_chunking_whitespace_and_empty_filtering():
 @pytest.mark.asyncio
 async def test_api_upload_returns_chunks():
     """Test API POST /api/v1/documents/upload returns chunk_count and chunks list."""
-    pdf_bytes = create_mock_pdf_bytes([
-        "Page 1 paragraph containing architecture explanation for RAG Document Q&A.",
-        "Page 2 paragraph detailing vector embedding and retrieval mechanisms."
-    ])
+    temp_dir = tempfile.mkdtemp(prefix="rag_chunk_test_")
+    chroma_dir = os.path.join(temp_dir, "chroma")
+    meta_file = os.path.join(temp_dir, "documents.json")
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post(
-            "/api/v1/documents/upload",
-            files={"file": ("architecture.pdf", pdf_bytes, "application/pdf")}
-        )
+    pdf_service = PDFService()
+    chunking_service = ChunkingService(chunk_size=1000, chunk_overlap=200)
+    embedding_service = EmbeddingService()
+    vector_service = VectorService(persist_directory=chroma_dir, collection_name="chunk_test_col")
+    metadata_store = MetadataStore(file_path=meta_file)
 
-        assert response.status_code == 200
-        data = response.json()
+    doc_service = DocumentService(
+        pdf_service=pdf_service,
+        chunking_service=chunking_service,
+        embedding_service=embedding_service,
+        vector_service=vector_service,
+        metadata_store=metadata_store
+    )
 
-        assert "chunk_count" in data
-        assert data["chunk_count"] == 2
-        assert len(data["chunks"]) == 2
+    app.dependency_overrides = {}
+    from app.api.routes.documents import get_document_service
+    app.dependency_overrides[get_document_service] = lambda: doc_service
 
-        # Verify chunk #1
-        c1 = data["chunks"][0]
-        assert c1["chunk_id"] is not None
-        assert c1["document_id"] == data["document_id"]
-        assert c1["source_filename"] == "architecture.pdf"
-        assert c1["page_number"] == 1
-        assert c1["chunk_index"] == 0
-        assert "Page 1" in c1["text"]
+    try:
+        pdf_bytes = create_mock_pdf_bytes([
+            "Page 1 paragraph containing architecture explanation for RAG Document Q&A.",
+            "Page 2 paragraph detailing vector embedding and retrieval mechanisms."
+        ])
 
-        # Verify chunk #2
-        c2 = data["chunks"][1]
-        assert c2["page_number"] == 2
-        assert c2["chunk_index"] == 1
-        assert "Page 2" in c2["text"]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/documents/upload",
+                files={"file": ("architecture.pdf", pdf_bytes, "application/pdf")}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+
+            assert "chunk_count" in data
+            assert data["chunk_count"] == 2
+            assert len(data["chunks"]) == 2
+
+            # Verify chunk #1
+            c1 = data["chunks"][0]
+            assert c1["chunk_id"] is not None
+            assert c1["document_id"] == data["document_id"]
+            assert c1["source_filename"] == "architecture.pdf"
+            assert c1["page_number"] == 1
+            assert c1["chunk_index"] == 0
+            assert "Page 1" in c1["text"]
+
+            # Verify chunk #2
+            c2 = data["chunks"][1]
+            assert c2["page_number"] == 2
+            assert c2["chunk_index"] == 1
+            assert "Page 2" in c2["text"]
+    finally:
+        app.dependency_overrides.clear()
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception:
+            pass

@@ -2,15 +2,22 @@
 
 import os
 import sys
+import ctypes
 import logging
 from typing import List, Dict, Optional
 
-# Windows DLL directory fix for PyTorch dynamic libraries (c10.dll)
+# Windows DLL directory fix for PyTorch dynamic libraries
 if sys.platform == "win32":
     try:
         torch_lib = os.path.join(sys.prefix, "Lib", "site-packages", "torch", "lib")
         if os.path.exists(torch_lib):
             os.add_dll_directory(torch_lib)
+            iomp = os.path.join(torch_lib, "libiomp5md.dll")
+            if os.path.exists(iomp):
+                try:
+                    ctypes.CDLL(iomp)
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -61,18 +68,7 @@ class EmbeddingService:
         return int(dim) if dim is not None else 384
 
     def embed_query(self, text: str) -> List[float]:
-        """Generate dense vector embedding for a single user search query or question.
-        
-        Args:
-            text: Query text string.
-            
-        Returns:
-            List of floats representing dense vector embedding.
-            
-        Raises:
-            ValueError: If input text is empty or whitespace-only.
-            EmbeddingError: If model fails vector computation.
-        """
+        """Generate dense vector embedding for a single user search query or question."""
         if not text or not text.strip():
             logger.warning("Query embedding rejected: text is empty or whitespace-only.")
             raise ValueError("Query text for embedding cannot be empty or whitespace-only.")
@@ -88,18 +84,7 @@ class EmbeddingService:
             raise EmbeddingError(f"Error computing query vector embedding: {err}")
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Generate dense vector embeddings in batches for a list of document chunks.
-        
-        Args:
-            texts: List of document text chunk strings.
-            
-        Returns:
-            List of float vector lists matching the order of input texts.
-            
-        Raises:
-            ValueError: If any input text is empty or whitespace-only.
-            EmbeddingError: If model fails batch vector computation.
-        """
+        """Generate dense vector embeddings in batches for a list of document chunks."""
         if not texts:
             return []
 

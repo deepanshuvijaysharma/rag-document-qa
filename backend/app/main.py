@@ -1,5 +1,30 @@
 """FastAPI Application Main Entrypoint."""
 
+import os
+import sys
+import ctypes
+
+# Windows DLL directory fix for PyTorch dynamic libraries
+if sys.platform == "win32":
+    try:
+        torch_lib = os.path.join(sys.prefix, "Lib", "site-packages", "torch", "lib")
+        if os.path.exists(torch_lib):
+            os.add_dll_directory(torch_lib)
+            for dll_name in ["libiomp5md.dll", "c10.dll", "torch_cpu.dll", "torch.dll"]:
+                dll_path = os.path.join(torch_lib, dll_name)
+                if os.path.exists(dll_path):
+                    try:
+                        ctypes.CDLL(dll_path)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+try:
+    import torch  # Pre-import PyTorch runtime cleanly before transformers
+except Exception:
+    pass
+
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
