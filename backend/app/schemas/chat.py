@@ -8,9 +8,10 @@ class SourceCitation(BaseModel):
     """Source document citation model."""
     document_id: str = Field(..., description="Unique UUID of source document")
     filename: str = Field(..., description="Source document filename")
-    page_number: int = Field(..., ge=1, description="1-indexed page number of retrieved chunk")
+    page_number: Optional[int] = Field(default=None, ge=1, description="1-indexed page number of retrieved chunk")
     chunk_id: str = Field(..., description="Unique UUID of retrieved text chunk")
     relevance_score: float = Field(..., description="Cosine similarity relevance score (0.0 to 1.0)")
+    snippet: Optional[str] = Field(default=None, description="Excerpt text snippet from retrieved chunk")
 
     model_config = ConfigDict(from_attributes=True)
 

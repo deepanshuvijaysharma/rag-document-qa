@@ -37,33 +37,41 @@ class ChatService:
 
         context_parts: List[str] = []
         for idx, res in enumerate(results):
+            filename = res.get("filename") or res.get("source_filename", "Document")
+            page_num = res.get("page_number", "N/A")
+            chunk_id = res.get("chunk_id", "unknown")
             header = (
                 f"--- RETRIEVED CHUNK #{idx + 1} "
-                f"(Source: {res['filename']}, Page: {res['page_number']}, ChunkID: {res['chunk_id']}) ---"
+                f"(Source: {filename}, Page: {page_num}, ChunkID: {chunk_id}) ---"
             )
-            text_body = res["text"].strip()
+            text_body = res.get("text", "").strip()
             context_parts.append(f"{header}\n{text_body}\n")
 
         return "\n".join(context_parts)
 
     def extract_sources(self, results: List[Dict[str, Any]]) -> List[SourceCitation]:
-        """Extract unique source citations from retrieved context chunks."""
+        """Extract unique source citations with optional snippet text from retrieved context chunks."""
         sources: List[SourceCitation] = []
         seen_chunks = set()
 
         for res in results:
-            chunk_id = res["chunk_id"]
-            if chunk_id in seen_chunks:
+            chunk_id = res.get("chunk_id")
+            if not chunk_id or chunk_id in seen_chunks:
                 continue
             seen_chunks.add(chunk_id)
 
+            snippet_text = res.get("text", "").strip()
+            if len(snippet_text) > 250:
+                snippet_text = snippet_text[:247] + "..."
+
             sources.append(
                 SourceCitation(
-                    document_id=res["document_id"],
-                    filename=res["filename"],
-                    page_number=res["page_number"],
+                    document_id=res.get("document_id", "unknown"),
+                    filename=res.get("filename") or res.get("source_filename", "Document"),
+                    page_number=res.get("page_number"),
                     chunk_id=chunk_id,
-                    relevance_score=res["score"]
+                    relevance_score=float(res.get("score", 0.0)),
+                    snippet=snippet_text or None
                 )
             )
 
@@ -75,16 +83,7 @@ class ChatService:
         document_id: Optional[str] = None,
         conversation_id: Optional[str] = None
     ) -> ChatResponse:
-        """Process natural language question through complete RAG pipeline.
-        
-        Args:
-            message: User question string
-            document_id: Optional document UUID filter
-            conversation_id: Optional session identifier string
-            
-        Returns:
-            ChatResponse containing conversation_id, grounded answer, and source citations.
-        """
+        """Process natural language question through complete RAG pipeline."""
         if not message or not message.strip():
             logger.warning("Chat request rejected: empty message.")
             raise ValueError("Message question cannot be empty or whitespace-only.")
