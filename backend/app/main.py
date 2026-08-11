@@ -26,10 +26,12 @@ except Exception:
     pass
 
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.api.routes import api_router
+from app.core.exceptions import AppBaseException
 
 # Configure structured logging
 logging.basicConfig(
@@ -58,6 +60,27 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(AppBaseException)
+async def custom_app_exception_handler(request: Request, exc: AppBaseException):
+    """Global exception handler for application domain exceptions."""
+    logger.warning(f"Domain exception on '{request.url.path}': {exc.message}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.message}
+    )
+
+
+@app.exception_handler(Exception)
+async def global_unhandled_exception_handler(request: Request, exc: Exception):
+    """Global exception handler to prevent internal tracebacks or secrets leakage."""
+    logger.error(f"Unhandled exception on '{request.url.path}': {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "An internal server error occurred while processing your request."}
+    )
+
 
 # Include API Router under /api/v1 and alias /api
 app.include_router(api_router, prefix=settings.API_PREFIX)

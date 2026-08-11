@@ -6,12 +6,10 @@ import logging
 from typing import List, Dict, Any, Optional
 import pymupdf
 
+from app.config import settings
 from app.core.exceptions import InvalidFileError, CorruptedPDFError, EmptyPDFError
 
 logger = logging.getLogger("rag_app.pdf_service")
-
-# Maximum allowed file size: 25 MB
-MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
 
 # Allowed PDF MIME types
 ALLOWED_MIME_TYPES = {
@@ -47,12 +45,9 @@ class PDFService:
         return clean_name
 
     def validate_pdf_file(self, filename: str, content: bytes, content_type: Optional[str] = None) -> str:
-        """Validate uploaded PDF file extension, magic bytes, MIME type, and file size.
-        
-        Returns sanitized filename if valid.
-        Raises InvalidFileError if validation fails.
-        """
+        """Validate uploaded PDF file extension, magic bytes, MIME type, and file size."""
         sanitized_name = self.sanitize_filename(filename)
+        max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
         # 1. Validate file extension
         if not sanitized_name.lower().endswith(".pdf"):
@@ -72,11 +67,10 @@ class PDFService:
             logger.warning("File validation failed: Uploaded file is 0 bytes.")
             raise InvalidFileError("Uploaded file is empty (0 bytes).")
 
-        # 4. Validate file size limits
-        if file_size > MAX_FILE_SIZE_BYTES:
-            max_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
-            logger.warning(f"File validation failed: Size {file_size} exceeds {max_mb}MB limit.")
-            raise InvalidFileError(f"File size exceeds maximum allowed limit of {max_mb}MB.")
+        # 4. Validate file size limits against MAX_UPLOAD_SIZE_MB
+        if file_size > max_size_bytes:
+            logger.warning(f"File validation failed: Size {file_size} exceeds {settings.MAX_UPLOAD_SIZE_MB}MB limit.")
+            raise InvalidFileError(f"File size exceeds maximum allowed limit of {settings.MAX_UPLOAD_SIZE_MB}MB.")
 
         # 5. Validate magic number bytes (%PDF-)
         if not content.startswith(b"%PDF-"):
@@ -86,11 +80,7 @@ class PDFService:
         return sanitized_name
 
     def extract_pages(self, pdf_bytes: bytes, filename: str = "document.pdf") -> List[Dict[str, Any]]:
-        """Extract text page-by-page from PDF bytes, preserving 1-indexed page numbers.
-        
-        Returns list of dicts: [{"page_number": 1, "text": "..."}, ...]
-        Raises CorruptedPDFError or EmptyPDFError on parsing failure.
-        """
+        """Extract text page-by-page from PDF bytes, preserving 1-indexed page numbers."""
         extracted_pages: List[Dict[str, Any]] = []
 
         try:
@@ -109,6 +99,11 @@ class PDFService:
             if total_pages == 0:
                 logger.warning(f"PDF '{filename}' has 0 pages or invalid page tree structure.")
                 raise CorruptedPDFError("Unable to parse corrupted PDF structure (0 pages found).")
+
+            # Check MAX_DOCUMENT_PAGES page limit boundary
+            if total_pages > settings.MAX_DOCUMENT_PAGES:
+                logger.warning(f"PDF '{filename}' has {total_pages} pages, exceeding {settings.MAX_DOCUMENT_PAGES} limit.")
+                raise InvalidFileError(f"PDF contains {total_pages} pages, exceeding maximum limit of {settings.MAX_DOCUMENT_PAGES} pages.")
 
             total_extracted_length = 0
 

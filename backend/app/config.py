@@ -20,7 +20,16 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://localhost:3000",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
     ]
+
+    # File Ingestion & Security Thresholds
+    MAX_UPLOAD_SIZE_MB: int = 25
+    MAX_DOCUMENT_PAGES: int = 500
+
+    # Retrieval & Context Boundaries
+    TOP_K: int = 4
+    MAX_CONTEXT_CHUNKS: int = 10
 
     # Vector Store Configuration
     CHROMA_PERSIST_DIRECTORY: str = "./data/chroma"
